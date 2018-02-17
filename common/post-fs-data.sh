@@ -118,6 +118,8 @@ main () {
         done
       fi
       if $LAST && [ -f $(dirname $MOD)/system.prop ]; then
+        sed -i "/^$/d" $(dirname $MOD)/system.prop
+        [ "$(tail -1 $(dirname $MOD)/system.prop)" ] && echo "" >> $(dirname $MOD)/system.prop
         while read PROP; do
           [ ! "$PROP" ] && break
           TPROP=$(echo "$PROP" | sed -r "s/(.*)=.*/\1/")
@@ -131,7 +133,12 @@ main () {
         cp_mv -m $(dirname $MOD)/system.prop $COREPATH/aml/mods/$MODNAME/system.prop
       fi
     done
-    $LAST && [ -s $MODPATH/system.prop ] || rm -f $MODPATH/system.prop
+    if $LAST; then
+      [ -s $MODPATH/system.prop ] || rm -f $MODPATH/system.prop
+      for FILE in $MODPATH/*.sh $MODPATH/*.prop; do
+        [ "$(tail -1 $FILE)" ] && echo "" >> $FILE
+      done
+    fi
     NUM=$((NUM+1))
   done
 }
@@ -166,14 +173,14 @@ if $REMPATCH; then
   fi
   for FILE in $MODPATH/system/etc/audio_effects.conf $MODPATH/system/vendor/etc/audio_effects.conf; do
     if [ -f $FILE ]; then
-      [ ! "$(grep '^ *# *music_helper {' $FILE)" -a "$(grep '^ *music_helper {' $FILE)" ] && sed -i "/effects {/,/^}/ {/music_helper {/,/}/ s/^/#/g}" $FILE
-      [ ! "$(grep '^ *# *sa3d {' $FILE)" -a "$(grep '^ *sa3d {' $FILE)" ] && sed -i "/effects {/,/^}/ {/sa3d {/,/^  }/ s/^/#/g}" $FILE
+      sed -i "/effects {/,/^}/ {/music_helper {/,/}/d}" $FILE
+      sed -i "/effects {/,/^}/ {/sa3d {/,/^  }/d}" $FILE
     fi
   done
   for FILE in $MODPATH/system/etc/audio_effects.xml $MODPATH/system/vendor/etc/audio_effects.xml; do
     if [ -f $FILE ]; then
-      [ ! "$(grep '^ *<\!--<effect name=\"music_helper\"*' $FILE)" -a "$(grep '^ *<effect name=\"music_helper\"*' $FILE)" ] && sed -i "s/^\( *\)<effect name=\"music_helper\"\(.*\)/\1<\!--<effect name=\"music_helper\"\2-->/" $FILE
-      [ ! "$(grep '^ *<\!--<effect name=\"sa3d\"*' $FILE)" -a "$(grep '^ *<effect name=\"sa3d\"*' $FILE)" ] && sed -i "s/^\( *\)<effect name=\"sa3d\"\(.*\)/\1<\!--<effect name=\"sa3d\"\2-->/" $FILE
+      sed -i "/^ *<postprocess>$/,/<\/postprocess>/ {/<stream type=\"music\">/,/<\/stream>/ {/<apply effect=\"music_helper\"\/>/d}}" $FILE
+      sed -i "/^ *<postprocess>$/,/<\/postprocess>/ {/<stream type=\"music\">/,/<\/stream>/ {/<apply effect=\"sa3d\"\/>/d}}" $FILE
     fi
   done
   main "$COREPATH/aml/mods/*/system"
