@@ -8,7 +8,6 @@
 MODPATH=${0%/*}
 MODDIR=$(dirname $MODPATH)
 COREPATH=$(dirname $MODPATH)/.core
-ORIGDIR=/sbin/.core/mirror
 REMPATCH=false
 NEWPATCH=false
 OREONEW=<OREONEW>
@@ -75,7 +74,7 @@ main () {
     [ $NUM -ne 1 ] && DIR=$MODDIR/*/system
     for MOD in $(find $DIR -maxdepth 0 -type d); do
       $LAST && [ "$MOD" == "$MODPATH/system" ] && continue
-      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_policy*.conf" -o -name "*audio_policy*.xml" -o -name "*mixer_paths*.xml")
+      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")
       [ -z "$FILES" ] && continue
       MODNAME=$(basename $(dirname $MOD))
       $LAST && [ ! "$(grep "$MODNAME" $COREPATH/aml/mods/modlist)" ] && echo "$MODNAME" >> $COREPATH/aml/mods/modlist
@@ -150,7 +149,7 @@ while read LINE; do
 done < $COREPATH/aml/mods/modlist
 #Determine if an audio mod has been added/changed
 DIR=$(find $MODDIR/* -type d -maxdepth 0 | sed -e "s|$MODDIR/lost\+found ||g" -e "s|$MODDIR/aml ||g")
-[ "$(find $DIR -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_policy*.conf" -o -name "*audio_policy*.xml" -o -name "*mixer_paths*.xml" | head -n 1)" ] && NEWPATCH=true
+[ "$(find $DIR -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" | head -n 1)" ] && NEWPATCH=true
 #Main method
 if $REMPATCH; then
   if [ -f $MODPATH/system.prop ]; then > $MODPATH/system.prop; else touch $MODPATH/system.prop; fi
@@ -158,19 +157,11 @@ if $REMPATCH; then
     rm -rf $COREPATH/aml/mods/$MODNAME
     sed -i "/$MODNAME/d" $COREPATH/aml/mods/modlist
   done
-  if $BOOTMODE && [ -L /system/vendor ]; then 
-    FILES="$(find $ORIGDIR/system $ORIGDIR/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_policy*.conf" -o -name "*audio_policy*.xml" -o -name "*mixer_paths*.xml")"
-    for FILE in ${FILES}; do
-      NAME=$(echo "$FILE" | sed -e "s|$ORIGDIR||" -e "s|/system/||")
-      cp_mv -c $FILE $MODPATH/system/$NAME
-    done
-  else
-    FILES="$(find -L $ORIGDIR/system -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_policy*.conf" -o -name "*audio_policy*.xml" -o -name "*mixer_paths*.xml")"
-    for FILE in ${FILES}; do
-      NAME=$(echo "$FILE" | sed "s|$ORIGDIR||")
-      cp_mv -c $FILE $MODPATH$NAME
-    done
-  fi
+  FILES="$(find /sbin/.core/mirror/system /sbin/.core/mirror/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" | sed "s|/sbin/.core/mirror/vendor|/sbin/.core/mirror/system/vendor|g")"
+  for FILE in ${FILES}; do
+    NAME=$(echo "$FILE" | sed -e "s|/sbin/.core/mirror||" -e "s|/system/||")
+    cp_mv -c $FILE $MODPATH/system/$NAME
+  done
   for FILE in $MODPATH/system/etc/audio_effects.conf $MODPATH/system/vendor/etc/audio_effects.conf; do
     if [ -f $FILE ]; then
       sed -i "/effects {/,/^}/ {/music_helper {/,/}/d}" $FILE
