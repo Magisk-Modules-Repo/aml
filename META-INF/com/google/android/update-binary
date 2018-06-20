@@ -158,7 +158,13 @@ patch_cfgs() {
       *) return 1;;
     esac
   done
-  file=$1; shift
+  case $1 in
+    *.conf|*.xml) case $1 in
+                    *audio_effects*) file=$1; shift;;
+                    *) return;;
+                  esac;;
+    *) file=$MODPATH/$NAME;;
+  esac
   $first && { lib=true; effect=true; }
   if $proxy; then
     effname=$1; shift
@@ -253,13 +259,13 @@ installmod() {
 
   # Copy original files to MODPATH
   if $BOOTMODE; then
-    FILES="$(find /sbin/.core/mirror/system /sbin/.core/mirror/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")"
+    FILES="$(find /sbin/.core/mirror/system /sbin/.core/mirror/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml")"
     for FILE in ${FILES}; do
       NAME=$(echo "$FILE" | sed -e "s|/sbin/.core/mirror||" -e "s|/system/||")
       cp_mv -c $FILE $MODPATH/system/$NAME
     done
   else
-    FILES="$(find -L /system -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")"
+    FILES="$(find -L /system -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml")"
     for FILE in ${FILES}; do
       NAME=$FILE
       cp_mv -c $FILE $MODPATH$NAME
@@ -275,27 +281,34 @@ installmod() {
   if $BOOTMODE; then MODS="$(find /sbin/.core/img/*/system $MOUNTPATH/*/system -maxdepth 0 -type d)"; else MODS="$(find $MOUNTPATH/*/system -maxdepth 0 -type d)"; fi
   if [ "$MODS" ]; then
     for MOD in ${MODS}; do
+      RUNONCE=false
       [ "$MOD" == "$MODPATH/system" ] && continue
-      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")
+      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml")
       [ -z "$FILES" ] && continue
       MODNAME=$(basename $(dirname $MOD))
       echo "$MODNAME" >> $MOUNTPATH/.core/aml/mods/modlist
+      # Add counter scripts can use so they know if it's the first time run or not
+      COUNT=1
+      [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MOD -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
       if [ -f "$(dirname $MOD)/.aml.sh" ]; then
         ui_print "    Found $(sed -n "s/^name=//p" $(dirname $MOD)/module.prop)! Patching..."
         # Use .aml.sh script included in module
         case $(sed -n 1p $(dirname $MOD)/.aml.sh) in
-          \#*~*.sh) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|"); cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|");;
-          *) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$MODNAME.sh; cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$MODNAME.sh;;
+          \#*~*.sh) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|")
+                    cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|")
+                    [ "$(sed -n "/RUNONCE=true/p" $INSTALLER/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|"))" ] && . $INSTALLER/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|");;
+          *) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$MODNAME.sh
+             cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$MODNAME.sh
+             [ "$(sed -n "/RUNONCE=true/p" $INSTALLER/mods/$MODNAME.sh)" ] && . $INSTALLER/mods/$MODNAME.sh;;
         esac
       fi
-      [ "$MODNAME" == "acp" ] && { (. $INSTALLER/mods/acp.sh) || { ui_print "   ! Error in script! Contact developer of mod!"; ui_print "   ! Remove that mod, then uninstall/reinstall aml!"; }; continue; }
       for FILE in ${FILES}; do
         NAME=$(echo "$FILE" | sed "s|$MOD|system|")
-        case $FILE in
+        $RUNONCE || case $FILE in
           *audio_effects*.conf) for AUDMOD in $(ls $INSTALLER/mods); do
                                   if [ "$AUDMOD" == "$MODNAME.sh" ]; then
-                                    [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MOD -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
                                     (. $INSTALLER/mods/$AUDMOD) || { [ -z "$PRINTED" ] && { ui_print "   ! Error in script! Contact developer of mod!"; ui_print "   ! Remove that mod, then uninstall/reinstall aml!"; } }
+                                    COUNT=$(($COUNT + 1))
                                     break
                                   else
                                     LIB=$(echo "$AUDMOD" | sed -r "s|(.*)~.*.sh|\1|")
@@ -303,6 +316,7 @@ installmod() {
                                     if [ "$(sed -n "/^libraries {/,/^}/ {/$LIB.so/p}" $FILE)" ] && [ "$(sed -n "/^effects {/,/^}/ {/uuid $UUID/p}" $FILE)" ] && [ "$(find $MOD -type f -name "$LIB.so")" ]; then
                                       LIBDIR="$(dirname $(find $MOD -type f -name "$LIB.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
                                       (. $INSTALLER/mods/$AUDMOD) || { [ -z "$PRINTED" ] && { ui_print "   ! Error in script! Contact developer of mod!"; ui_print "   ! Remove that mod, then uninstall/reinstall aml!"; } }
+                                      COUNT=$(($COUNT + 1))
                                       PRINTED="${PRINTED} $UUID"
                                       break
                                     fi
@@ -310,8 +324,8 @@ installmod() {
                                 done;;
           *audio_effects*.xml) for AUDMOD in $(ls $INSTALLER/mods); do
                                  if [ "$AUDMOD" == "$MODNAME.sh" ]; then
-                                   [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MOD -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
                                    (. $INSTALLER/mods/$AUDMOD) || { [ -z "$PRINTED" ] && { ui_print "   ! Error in script! Contact developer of mod!"; ui_print "   ! Remove that mod, then uninstall/reinstall aml!"; } }
+                                   COUNT=$(($COUNT + 1))
                                    break
                                  else
                                    LIB=$(echo "$AUDMOD" | sed -r "s|(.*)~.*.sh|\1|")
@@ -319,6 +333,7 @@ installmod() {
                                    if [ "$(sed -n "/<libraries>/,/<\/libraries>/ {/path=\"$LIB.so\"/p}" $FILE)" ] && [ "$(sed -n "/<effects>/,/<\/effects>/ {/uuid=\"$UUID\"/p}" $FILE)" ] && [ "$(find $MOD -type f -name "$LIB.so")" ]; then
                                      LIBDIR="$(dirname $(find $MOD -type f -name "$LIB.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
                                      (. $INSTALLER/mods/$AUDMOD) || { [ -z "$PRINTED" ] && { ui_print "   ! Error in script! Contact developer of mod!"; ui_print "   ! Remove that mod, then uninstall/reinstall aml!"; } }
+                                     COUNT=$(($COUNT + 1))
                                      PRINTED="${PRINTED} $UUID"
                                      break
                                    fi
@@ -405,7 +420,11 @@ uninstallmod() {
   [ -f $COREPATH/aml/mods/modlist ] && {
   if [ -s $COREPATH/aml/mods/modlist ]; then
     while read LINE; do
-      [ -d $MODDIR/$LINE -a ! -f "$MODDIR/$LINE/update" ] && { for FILE in $(find $COREPATH/aml/mods/$LINE -type f); do
+      if $BOOTMODE && [ -d $MOUNTPATH/$LINE ]; then
+        [ "$(find $MOUNTPATH/$LINE -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml"  -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml"| head -n 1)" ] && continue
+        MODDIR=$MOUNTPATH
+      fi
+      [ -d $MODDIR/$LINE ] && { for FILE in $(find $COREPATH/aml/mods/$LINE -type f); do
         NAME=$(echo "$FILE" | sed "s|$COREPATH/aml/mods/||")
         cp_mv -m $FILE $MODDIR/$NAME
       done; }

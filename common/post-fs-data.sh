@@ -54,7 +54,13 @@ patch_cfgs() {
       *) return 1;;
     esac
   done
-  file=$1; shift
+  case $1 in
+    *.conf|*.xml) case $1 in
+                    *audio_effects*) file=$1; shift;;
+                    *) return;;
+                  esac;;
+    *) file=$MODPATH/$NAME;;
+  esac
   $first && { lib=true; effect=true; }
   if $proxy; then
     effname=$1; shift
@@ -137,47 +143,53 @@ main() {
     [ "$1" == "$MODDIR/*/system" -o $NUM -ne 1 ] && LAST=true
     [ $NUM -ne 1 ] && DIR=$MODDIR/*/system
     for MOD in $(find $DIR -maxdepth 0 -type d); do
+      RUNONCE=false
       $LAST && [ "$MOD" == "$MODPATH/system" ] && continue
-      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")
+      FILES=$(find $MOD -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml")
       [ -z "$FILES" ] && continue
       MODNAME=$(basename $(dirname $MOD))
       $LAST && [ ! "$(grep "$MODNAME" $COREPATH/aml/mods/modlist)" ] && echo "$MODNAME" >> $COREPATH/aml/mods/modlist
+      COUNT=1
+      [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MOD -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"      
       if [ -f "$(dirname $MOD)/.aml.sh" ]; then
         case $(sed -n 1p $(dirname $MOD)/.aml.sh) in
-          \#*~*.sh) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|"); cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|");;
-          *) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$MODNAME.sh; cp -f $(dirname $MOD)/.aml.sh $INSTALLER/mods/$MODNAME.sh;;
+          \#*~*.sh) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|")
+                    [ "$(sed -n "/RUNONCE=true/p" $MODPATH/mods/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|"))" ] && . $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|");;
+          *) cp_mv -c $(dirname $MOD)/.aml.sh $MODPATH/.scripts/$MODNAME.sh
+             [ "$(sed -n "/RUNONCE=true/p" $MODPATH/mods/$MODNAME.sh)" ] && . $MODPATH/.scripts/$(sed -n 1p $(dirname $MOD)/.aml.sh | sed -r "s|#(.*)|\1|");;
         esac
       fi
-      [ "$MODNAME" == "acp" ] && { . $INSTALLER/mods/acp.sh; continue; }
       for FILE in ${FILES}; do
         NAME=$(echo "$FILE" | sed "s|$MOD|system|")
-        case $FILE in
+        $RUNONCE || case $FILE in
           *audio_effects*.conf) for AUDMOD in $(ls $MODPATH/.scripts); do
-                             if [ "$AUDMOD" == "$MODNAME.sh" ]; then
-                               [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MODDIR/$MODNAME/system -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MODDIR/$MODNAME||" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
-                               . $INSTALLER/mods/$AUDMOD
-                               break
-                             else
-                               LIB=$(echo "$AUDMOD" | sed -r "s|(.*)~.*.sh|\1|")
-                               UUID=$(echo "$AUDMOD" | sed -r "s|.*~(.*).sh|\1|")
-                               if [ "$(sed -n "/^libraries {/,/^}/ {/$LIB.so/p}" $FILE)" ] && [ "$(sed -n "/^effects {/,/^}/ {/uuid $UUID/p}" $FILE)" ] && [ "$(find $MODDIR/$MODNAME/system -type f -name "$LIB.so")" ]; then
-                                 LIBDIR="$(dirname $(find $MODDIR/$MODNAME/system -type f -name "$LIB.so" | head -n 1) | sed -e "s|$MODDIR/$MODNAME||" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
-                                 . $INSTALLER/mods/$AUDMOD
-                                 break
-                               fi
-                             fi
-                           done;;
+                                  if [ "$AUDMOD" == "$MODNAME.sh" ]; then
+                                    . $MODPATH/.scripts/$AUDMOD
+                                    COUNT=$(($COUNT + 1))
+                                    break
+                                  else
+                                    LIB=$(echo "$AUDMOD" | sed -r "s|(.*)~.*.sh|\1|")
+                                    UUID=$(echo "$AUDMOD" | sed -r "s|.*~(.*).sh|\1|")
+                                    if [ "$(sed -n "/^libraries {/,/^}/ {/$LIB.so/p}" $FILE)" ] && [ "$(sed -n "/^effects {/,/^}/ {/uuid $UUID/p}" $FILE)" ] && [ "$(find $MODDIR/$MODNAME/system -type f -name "$LIB.so")" ]; then
+                                      LIBDIR="$(dirname $(find $MODDIR/$MODNAME/system -type f -name "$LIB.so" | head -n 1) | sed -e "s|$MODDIR/$MODNAME||" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
+                                      . $MODPATH/.scripts/$AUDMOD
+                                      COUNT=$(($COUNT + 1))
+                                      break
+                                    fi
+                                  fi
+                                done;;
           *audio_effects*.xml) for AUDMOD in $(ls $MODPATH/.scripts); do
                                  if [ "$AUDMOD" == "$MODNAME.sh" ]; then
-                                   [ "$MODNAME" == "ainur_sauron" ] && LIBDIR="$(dirname $(find $MODDIR/$MODNAME/system -type f -name "libbundlewrapper.so" | head -n 1) | sed -e "s|$MODDIR/$MODNAME||" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
-                                   . $INSTALLER/mods/$AUDMOD
+                                   . $MODPATH/.scripts/$AUDMOD
+                                   COUNT=$(($COUNT + 1))
                                    break
                                  else
                                    LIB=$(echo "$AUDMOD" | sed -r "s|(.*)~.*.sh|\1|")
                                    UUID=$(echo "$AUDMOD" | sed -r "s|.*~(.*).sh|\1|")
                                    if [ "$(sed -n "/<libraries>/,/<\/libraries>/ {/path=\"$LIB.so\"/p}" $FILE)" ] && [ "$(sed -n "/<effects>/,/<\/effects>/ {/uuid=\"$UUID\"/p}" $FILE)" ] && [ "$(find $MOD -type f -name "$LIB.so")" ]; then
                                      LIBDIR="$(dirname $(find $MOD -type f -name "$LIB.so" | head -n 1) | sed -e "s|$MOD|/system|" -e "s|/system/vendor|/vendor|" -e "s|/lib64|/lib|")"
-                                     . $INSTALLER/mods/$AUDMOD
+                                     . $MODPATH/.scripts/$AUDMOD
+                                     COUNT=$(($COUNT + 1))
                                      break
                                    fi
                                  fi
@@ -218,7 +230,7 @@ while read LINE; do
 done < $COREPATH/aml/mods/modlist
 #Determine if an audio mod has been added/changed
 DIR=$(find $MODDIR/* -type d -maxdepth 0 | sed -e "s|$MODDIR/lost\+found ||g" -e "s|$MODDIR/aml ||g")
-[ "$(find $DIR -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" | head -n 1)" ] && NEWPATCH=true
+[ "$(find $DIR -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml"  -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml"| head -n 1)" ] && NEWPATCH=true
 #Main method
 if $REMPATCH; then
   if [ -f $MODPATH/system.prop ]; then > $MODPATH/system.prop; else touch $MODPATH/system.prop; fi
@@ -226,7 +238,7 @@ if $REMPATCH; then
     rm -rf $COREPATH/aml/mods/$MODNAME
     sed -i "/$MODNAME/d" $COREPATH/aml/mods/modlist
   done
-  FILES="$(find /sbin/.core/mirror/system /sbin/.core/mirror/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml")"
+  FILES="$(find /sbin/.core/mirror/system /sbin/.core/mirror/vendor -type f -name "*audio_effects*.conf" -o -name "*audio_effects*.xml" -o -name "*audio_*policy*.conf" -o -name "*audio_*policy*.xml" -o -name "*mixer_paths*.xml" -o -name "*mixer_gains*.xml" -o -name "*audio_device*.xml" -o -name "*sapa_feature*.xml")"
   for FILE in ${FILES}; do
     NAME=$(echo "$FILE" | sed -e "s|/sbin/.core/mirror||" -e "s|/system/||")
     cp_mv -c $FILE $MODPATH/system/$NAME
