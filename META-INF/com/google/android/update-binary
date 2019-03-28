@@ -1,31 +1,28 @@
 #!/sbin/sh
-##########################################################################################
-#
-# Magisk Module Template Install Script
-# by topjohnwu
-#
-##########################################################################################
 
 TMPDIR=/dev/tmp
-INSTALLER=$TMPDIR/install
-# Always mount under tmp
-MOUNTPATH=$TMPDIR/magisk_img
+MOUNTPATH=/dev/magisk_img
 
 # Default permissions
 umask 022
 
 # Initial cleanup
 rm -rf $TMPDIR 2>/dev/null
-mkdir -p $INSTALLER
+mkdir -p $TMPDIR
 
 # echo before loading util_functions
 ui_print() { echo "$1"; }
 
 require_new_magisk() {
-  ui_print "*******************************"
-  ui_print " Please install Magisk v15.3+! "
-  ui_print "*******************************"
+  ui_print "***********************************"
+  ui_print " Please install the latest Magisk! "
+  ui_print "***********************************"
   exit 1
+}
+
+imageless_magisk() {
+  [ $MAGISK_VER_CODE -gt 18100 ]
+  return $?
 }
 
 ##########################################################################################
@@ -33,57 +30,26 @@ require_new_magisk() {
 ##########################################################################################
 
 OUTFD=$2
-ZIP=$3
+ZIPFILE=$3
 
 mount /data 2>/dev/null
 
-# Load utility functions and keep backwards compatibility
+# Load utility functions
 if [ -f /data/adb/magisk/util_functions.sh ]; then
-  NVBASE=/data/adb
   . /data/adb/magisk/util_functions.sh
-elif [ -f /data/magisk/util_functions.sh ]; then
-  NVBASE=/data
-  . /data/magisk/util_functions.sh
+  NVBASE=/data/adb
 else
   require_new_magisk
 fi
-[ -z $MAGISK_VER_CODE ] && require_new_magisk
-
-# Extract files
-unzip -o "$ZIP" -d $INSTALLER >&2
-[ ! -f $INSTALLER/config.sh ] && abort "! Unable to extract zip file!"
-
-# Set paths
-if [ $MAGISK_VER_CODE -ge 18000 ]; then
-  COREPATH=$NVBASE
-  for FILE in "post-fs-data.sh" "aml.sh"; do
-    sed -i -e "s|COREPATH=.*|COREPATH=$COREPATH|" -e "s|MAGISKTMP=.*|MAGISKTMP=/sbin/.magisk|" $INSTALLER/common/$FILE
-  done
-else
-  COREPATH=$MOUNTPATH/.core
-  MAGISKTMP=/sbin/.core
-  if [ $MAGISK_VER_CODE -lt 17000 ]; then
-    # This stuff isn't in util_functions in older magisk versions
-    ps | grep zygote | grep -v grep >/dev/null && BOOTMODE=true || BOOTMODE=false
-    $BOOTMODE || ps -A 2>/dev/null | grep zygote | grep -v grep >/dev/null && BOOTMODE=true
-    MAGISKBIN=/data/adb/magisk
-  fi
-fi
-
-# Use alternative image if in BOOTMODE
-$BOOTMODE && IMG=$NVBASE/magisk_merge.img
 
 # Preperation for flashable zips
-get_outfd
+setup_flashable
 
 # Mount partitions
 mount_partitions
 
 # Detect version and architecture
 api_level_arch_detect
-
-# You can get the Android API version from $API, the CPU architecture from $ARCH
-# Useful if you are creating Android version / platform dependent mods
 
 # Setup busybox and binaries
 $BOOTMODE && boot_actions || recovery_actions
@@ -92,19 +58,29 @@ $BOOTMODE && boot_actions || recovery_actions
 # Preparation
 ##########################################################################################
 
-# Load configurations
-. $INSTALLER/config.sh
+# Extract common files
+unzip -oj "$ZIPFILE" module.prop install.sh uninstall.sh 'common/*' -d $TMPDIR >&2
 
-# Check the installed magisk version
-MIN_VER=`grep_prop minMagisk $INSTALLER/module.prop`
-[ ! -z $MAGISK_VER_CODE -a $MAGISK_VER_CODE -ge $MIN_VER ] || require_new_magisk
-MODID=`grep_prop id $INSTALLER/module.prop`
-MODPATH=$MOUNTPATH/$MODID
+[ ! -f $TMPDIR/install.sh ] && abort "! Unable to extract zip file!"
+# Load install script
+. $TMPDIR/install.sh
 
-# Print mod name
+if imageless_magisk; then
+  $BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+  MODULEROOT=$NVBASE/$MODDIRNAME
+else
+  $BOOTMODE && IMGNAME=magisk_merge.img || IMGNAME=magisk.img
+  IMG=$NVBASE/$IMGNAME
+  request_zip_size_check "$ZIPFILE"
+  mount_magisk_img
+  MODULEROOT=$MOUNTPATH
+fi
+
+MODID=`grep_prop id $TMPDIR/module.prop`
+MODPATH=$MODULEROOT/$MODID
+
 print_modname
 
-# Please leave this message in your flashable zip for credits :)
 ui_print "******************************"
 ui_print "Powered by Magisk (@topjohnwu)"
 ui_print "******************************"
@@ -113,39 +89,63 @@ ui_print "******************************"
 # Install
 ##########################################################################################
 
-# Get the variable reqSizeM. Use your own method to determine reqSizeM if needed
-request_zip_size_check "$ZIP"
+# Create mod paths
+rm -rf $MODPATH 2>/dev/null
+mkdir -p $MODPATH
 
-# This function will mount $IMG to $MOUNTPATH, and resize the image based on $reqSizeM
-mount_magisk_img
+# Remove placeholder
+rm -f $MODPATH/system/placeholder 2>/dev/null
 
-# Detect aml version and act accordingly
-if $BOOTMODE; then 
-  MOD_VER=$MAGISKTMP/img/$MODID/module.prop
+# Custom uninstaller
+[ -f $TMPDIR/uninstall.sh ] && cp -af $TMPDIR/uninstall.sh $MODPATH/uninstall.sh
+
+# Auto Mount
+if imageless_magisk; then
+  $SKIPMOUNT && touch $MODPATH/skip_mount
 else
-  MOD_VER=$MODPATH/module.prop
+  $SKIPMOUNT || touch $MODPATH/auto_mount
 fi
-if [ -f "$MOD_VER" ]; then
-  if [ $(grep_prop versionCode $MOD_VER) -ge $(grep_prop versionCode $INSTALLER/module.prop) ]; then
-    ui_print "- Current or newer version detected. Uninstalling!"
-    uninstallmod
+
+# prop files
+$PROPFILE && cp -af $TMPDIR/system.prop $MODPATH/system.prop
+
+# Module info
+cp -af $TMPDIR/module.prop $MODPATH/module.prop
+if $BOOTMODE; then
+  # Update info for Magisk Manager
+  if imageless_magisk; then
+    mktouch $NVBASE/modules/$MODID/update
+    cp -af $TMPDIR/module.prop $NVBASE/modules/$MODID/module.prop
   else
-    ui_print "- Older version detected. Upgrading!"
-    uninstallmod
-    installmod
+    mktouch /sbin/.magisk/img/$MODID/update
+    cp -af $TMPDIR/module.prop /sbin/.magisk/img/$MODID/module.prop
   fi
-else
-  installmod
 fi
+
+# post-fs-data mode scripts
+$POSTFSDATA && cp -af $TMPDIR/post-fs-data.sh $MODPATH/post-fs-data.sh
+
+# service mode scripts
+$LATESTARTSERVICE && cp -af $TMPDIR/service.sh $MODPATH/service.sh
+
+on_install
+
+# Handle replace folders
+for TARGET in $REPLACE; do
+  mktouch $MODPATH$TARGET/.replace
+done
+
+ui_print "- Setting permissions"
+set_permissions
 
 ##########################################################################################
 # Finalizing
 ##########################################################################################
 
-# Unmount magisk image and shrink if possible
-unmount_magisk_img
-
+cd /
+imageless_magisk || unmount_magisk_img
 $BOOTMODE || recovery_cleanup
-rm -rf $TMPDIR
+rm -rf $TMPDIR $MOUNTPATH
 
+ui_print "- Done"
 exit 0
